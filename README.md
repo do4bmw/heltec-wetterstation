@@ -78,9 +78,27 @@ Linienbruch dar und nicht als erfundene Verbindungslinie.
 {"temperatur":25.09,"druck_absolut":972.72,"qnh":1018.18,"feuchte":null,
  "hat_feuchte":false,"sensor":"BMP280","adresse":118,"i2c":"SDA=21 SCL=22",
  "hoehe_m":380,"laufzeit_s":420,"alter_s":1,"ssid":"...","rssi":-64,
- "ipv4":"...","zeit_text":"18.09.2026 19:57:14","zeit_unix":1789753034,
- "zeit_ok":true,"ntp":"synchron","ntp_alter_s":132}
+ "ipv4":"...","ipv6":"...","zeit_text":"18.09.2026 19:57:14",
+ "zeit_unix":1789753034,"zeit_ok":true,"ntp":"synchron","ntp_alter_s":132}
 ```
+
+### Netz und Zeit
+
+Das Board holt seine Adresse per DHCP und meldet sich zusätzlich per mDNS, ist
+also ohne bekannte IP unter `heltec-wetter.local` erreichbar. **IPv6** ist
+aktiv: Die globale Adresse kommt per SLAAC, der Webserver bindet auf `::` und
+nimmt damit beide Protokolle an. Im Browser gehört eine IPv6-Adresse in eckige
+Klammern: `http://[2a00:...]/`.
+
+Die Seite zeigt Uhrzeit und NTP-Status an. Die Uhrzeit kommt dabei vom Board
+und nicht aus der Browser-Zeit — nur so ist erkennbar, ob Zeitzone und
+Sommerzeitregel auf dem ESP32 stimmen. Der NTP-Status nennt auch das Alter des
+letzten Abgleichs: Verliert das Board den Zeitserver, läuft die Uhr weiter und
+sieht plausibel aus, während das Alter unbemerkt wächst.
+
+Ein Fallstrick beim Abfragen der IPv6-Adresse: `IPAddress` vergleicht auch den
+Adresstyp, deshalb ist `globalIPv6() == IPAddress((uint32_t)0)` **immer** falsch
+(IPv6 gegen IPv4-Null). Zuverlässig ist der Textvergleich gegen `"::"`.
 
 ## Verdrahtung
 
@@ -117,10 +135,15 @@ arduino-cli upload -p COM6 --fqbn esp32:esp32:heltec_wifi_lora_32_V2 Wetter_Web
 FQBN je nach Board: `heltec_wifi_lora_32_V2`, `heltec_wifi_lora_32` (V1) oder
 `heltec_wireless_stick`.
 
+## Sonstiges
+
+Die weiße LED blitzt 10 ms nach jeder Messung als Lebenszeichen — bewusst ohne
+`delay()`, damit der Webserver dabei bedient wird. Dauer über `BLITZ_DAUER`.
+
 ## Noch offen
 
 * MQTT ist vorbereitet, aber nicht aktiv. Alle Messwerte laufen durch eine
   `Messwerte`-Struktur, aus der Display, Webseite und API lesen — eine
   `mqttSenden()` würde aus derselben Quelle publizieren.
-* IPv6 ist im Code angelegt und derzeit abgeschaltet
-  (`WiFi.enableIPv6(true)` vor `WiFi.begin()` aktiviert es wieder).
+* Ohne echten BME280 fehlt die Luftfeuchte. Ein AHT20 oder SHT31 am selben Bus
+  könnte sie ergänzen, ohne den BMP280 zu ersetzen.

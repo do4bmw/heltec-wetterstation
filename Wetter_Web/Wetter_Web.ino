@@ -1,10 +1,10 @@
 // Wetterstation mit Webinterface - Heltec WiFi LoRa 32 (V2)
 // BMP280/BME280 am I2C, Anzeige auf dem OLED, Webseite im WLAN.
 //
-// Erreichbar per IPv4 und als http://heltec-wetter.local/ (IPv6 derzeit aus)
+// Erreichbar per IPv4, IPv6 und als http://heltec-wetter.local/
 // JSON-Schnittstellen: /api (aktuelle Werte), /verlauf (12-Stunden-Historie)
 //
-// Der Verlauf liegt als Ringpuffer im RAM und wird alle 5 Minuten auf das
+// Der Verlauf liegt als Ringpuffer im RAM und wird jede Minute auf das
 // LittleFS-Dateisystem geschrieben, damit er einen Neustart uebersteht.
 
 #include <Arduino.h>
@@ -484,7 +484,8 @@ a{color:var(--akz)}
 <tr><td>Sensor</td><td id="s">--</td></tr>
 <tr><td>I2C</td><td id="i2c">--</td></tr>
 <tr><td>Standorth&ouml;he</td><td id="h">--</td></tr>
-<tr><td>IP-Adresse</td><td id="ip4">--</td></tr>
+<tr><td>IPv4</td><td id="ip4">--</td></tr>
+<tr><td>IPv6</td><td id="ip6">--</td></tr>
 <tr><td>WLAN</td><td id="w">--</td></tr>
 <tr><td>Laufzeit</td><td id="up">--</td></tr>
 <tr><td>Messpunkte</td><td id="np">--</td></tr>
@@ -551,6 +552,7 @@ async function ladeWerte(){try{
  g("i2c").textContent=d.i2c;
  g("h").textContent=d.hoehe_m+" m über NN";
  g("ip4").textContent=d.ipv4;
+ g("ip6").textContent=d.ipv6||"keine Adresse";
  g("w").textContent=d.ssid+" ("+d.rssi+" dBm)";
  g("up").textContent=zeit(d.laufzeit_s);
  g("sub").textContent="Messung von vor "+d.alter_s+" s";
@@ -571,12 +573,26 @@ setInterval(ladeWerte,5000);setInterval(ladeVerlauf,60000);
 
 uint32_t letzteMessung = 0;
 
+// Achtung: IPAddress vergleicht auch den Adresstyp, deshalb ist
+// "v6 == IPAddress((uint32_t)0)" immer falsch (IPv6 gegen IPv4-Null).
+// Der Textvergleich gegen "::" ist der zuverlaessige Weg.
+bool v6Gesetzt(const IPAddress &a) { return a.toString() != "::"; }
+
+// Globale IPv6-Adresse, sonst die link-local, sonst leer
+String ipv6Text() {
+  IPAddress v6 = WiFi.globalIPv6();
+  if (v6Gesetzt(v6)) return v6.toString();
+  IPAddress ll = WiFi.linkLocalIPv6();
+  if (v6Gesetzt(ll)) return ll.toString();
+  return "";
+}
+
 void handleSeite() {
   server.send_P(200, "text/html; charset=utf-8", SEITE);
 }
 
 void handleApi() {
-  char json[800];
+  char json[960];
   char feuchte[16];
   if (messwerte.hatFeuchte) snprintf(feuchte, sizeof(feuchte), "%.1f", messwerte.feuchte);
   else                      snprintf(feuchte, sizeof(feuchte), "null");
@@ -592,7 +608,7 @@ void handleApi() {
     "{\"temperatur\":%.2f,\"druck_absolut\":%.2f,\"qnh\":%.2f,"
     "\"feuchte\":%s,\"hat_feuchte\":%s,\"sensor\":\"%s\",\"adresse\":%u,"
     "\"i2c\":\"%s\",\"hoehe_m\":%.0f,\"laufzeit_s\":%lu,\"alter_s\":%lu,"
-    "\"ssid\":\"%s\",\"rssi\":%d,\"ipv4\":\"%s\","
+    "\"ssid\":\"%s\",\"rssi\":%d,\"ipv4\":\"%s\",\"ipv6\":\"%s\","
     "\"zeit_text\":\"%s\",\"zeit_unix\":%lu,\"zeit_ok\":%s,"
     "\"ntp\":\"%s\",\"ntp_alter_s\":%ld}",
     messwerte.temperatur, messwerte.druckAbs, messwerte.qnh,
@@ -601,7 +617,7 @@ void handleApi() {
     (unsigned long)(millis() / 1000),
     (unsigned long)((millis() - letzteMessung) / 1000),
     WLAN_SSID, WiFi.RSSI(),
-    WiFi.localIP().toString().c_str(),
+    WiFi.localIP().toString().c_str(), ipv6Text().c_str(),
     zeitStr, (unsigned long)time(nullptr), zeitGueltig() ? "true" : "false",
     ntpStatus(), abgleichAlter);
 
@@ -664,9 +680,7 @@ void handleVerlauf() {
 void wlanVerbinden() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
-  // IPv6 ist bewusst aus. Zum Aktivieren hier WiFi.enableIPv6(true) vor
-  // begin() setzen - der Webserver bindet ohnehin auf "::" und nimmt dann
-  // beide Protokolle an; Adressen liefern linkLocalIPv6()/globalIPv6().
+  WiFi.enableIPv6(true);            // muss vor begin() stehen
   WiFi.begin(WLAN_SSID, WLAN_PASSWORT);
 
   Serial.printf("Verbinde mit %s ", WLAN_SSID);
@@ -681,6 +695,14 @@ void wlanVerbinden() {
     Serial.printf("verbunden, RSSI %d dBm\n", WiFi.RSSI());
     Serial.printf("  IPv4     : %s\n", WiFi.localIP().toString().c_str());
     Serial.printf("  Gateway  : %s\n", WiFi.gatewayIP().toString().c_str());
+
+    // SLAAC braucht nach dem Verbinden einen Moment, bis die globale Adresse
+    // steht; die link-local ist meist sofort da.
+    uint32_t v6start = millis();
+    while (!v6Gesetzt(WiFi.globalIPv6()) && millis() - v6start < 10000) delay(250);
+    Serial.printf("  IPv6 link: %s\n", WiFi.linkLocalIPv6().toString().c_str());
+    Serial.printf("  IPv6 glob: %s (nach %lu ms)\n",
+                  WiFi.globalIPv6().toString().c_str(), (unsigned long)(millis() - v6start));
 
     if (MDNS.begin(HOSTNAME)) {
       MDNS.addService("http", "tcp", 80);
@@ -748,7 +770,7 @@ void setup() {
   server.on("/verlauf", handleVerlauf);
   server.onNotFound([]() { server.send(404, "text/plain", "Nicht gefunden\n"); });
   server.begin();
-  Serial.println("Webserver laeuft auf Port 80");
+  Serial.println("Webserver laeuft auf Port 80 (IPv4 + IPv6)");
 }
 
 // ---------------------------------------------------------------- Loop

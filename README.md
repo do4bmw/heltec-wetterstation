@@ -98,7 +98,18 @@ sieht plausibel aus, während das Alter unbemerkt wächst.
 
 Ein Fallstrick beim Abfragen der IPv6-Adresse: `IPAddress` vergleicht auch den
 Adresstyp, deshalb ist `globalIPv6() == IPAddress((uint32_t)0)` **immer** falsch
-(IPv6 gegen IPv4-Null). Zuverlässig ist der Textvergleich gegen `"::"`.
+(IPv6 gegen IPv4-Null). Zuverlässig ist der Textvergleich gegen `"::"`. Die
+globale Adresse steht je nach Router nach 1 bis 6 Sekunden bereit — die
+Warteschleife sollte entsprechend großzügig bemessen sein.
+
+Beim Start prüft das Board zusätzlich, ob es über die IPv6-**Standardroute**
+nach draußen kommt: ein TCP-Connect auf `[2606:4700:4700::1111]:53`. Ein Ziel
+im eigenen `/64` würde nur Neighbor Discovery belegen und das Gateway gar nicht
+beanspruchen — deshalb eine Adresse ausserhalb. Das Ergebnis steht in `/api`
+(`ipv6_extern`) und auf der Seite. Der Test läuft bewusst nur einmal beim Start:
+Ein blockierender Verbindungsversuch im laufenden Betrieb würde den Webserver
+für bis zu vier Sekunden anhalten. Das Alter des Tests wird deshalb mit
+ausgewiesen.
 
 ## Verdrahtung
 

@@ -486,6 +486,7 @@ a{color:var(--akz)}
 <tr><td>Standorth&ouml;he</td><td id="h">--</td></tr>
 <tr><td>IPv4</td><td id="ip4">--</td></tr>
 <tr><td>IPv6</td><td id="ip6">--</td></tr>
+<tr><td>IPv6 nach au&szlig;en</td><td id="v6x">--</td></tr>
 <tr><td>WLAN</td><td id="w">--</td></tr>
 <tr><td>Laufzeit</td><td id="up">--</td></tr>
 <tr><td>Messpunkte</td><td id="np">--</td></tr>
@@ -553,6 +554,9 @@ async function ladeWerte(){try{
  g("h").textContent=d.hoehe_m+" m über NN";
  g("ip4").textContent=d.ipv4;
  g("ip6").textContent=d.ipv6||"keine Adresse";
+ g("v6x").textContent=d.ipv6_extern===null?"nicht geprueft":
+  (d.ipv6_extern?"erreichbar":"kein Durchkommen")+
+  " — "+d.ipv6_testziel+", "+d.ipv6_extern_ms+" ms, Test vor "+kurz(d.ipv6_extern_alter_s);
  g("w").textContent=d.ssid+" ("+d.rssi+" dBm)";
  g("up").textContent=zeit(d.laufzeit_s);
  g("sub").textContent="Messung von vor "+d.alter_s+" s";
@@ -587,12 +591,50 @@ String ipv6Text() {
   return "";
 }
 
+// Prueft, ob das Board ueber die IPv6-Standardroute nach draussen kommt.
+// Eine Adresse im eigenen /64 wuerde nur Neighbor Discovery belegen und das
+// Gateway gar nicht beanspruchen - deshalb ein Ziel ausserhalb: ein
+// TCP-Connect auf den DNS-Port von Cloudflare. Gelingt er, ist eine
+// Default-Route vorhanden und in Benutzung.
+static const char     IPV6_TESTZIEL[] = "2606:4700:4700::1111";
+static const uint16_t IPV6_TESTPORT   = 53;
+
+struct {
+  bool     gelaufen  = false;
+  bool     ok        = false;
+  uint32_t dauerMs   = 0;
+  uint32_t beiMillis = 0;
+} v6Test;
+
+void pruefeIpv6Route() {
+  IPAddress ziel;
+  if (!ziel.fromString(IPV6_TESTZIEL)) {
+    Serial.println("  IPv6 raus: Zieladresse unlesbar");
+    return;
+  }
+
+  NetworkClient c;
+  uint32_t t0    = millis();
+  bool     ok    = c.connect(ziel, IPV6_TESTPORT, 4000);
+  uint32_t dauer = millis() - t0;
+  c.stop();
+
+  v6Test.gelaufen  = true;
+  v6Test.ok        = ok;
+  v6Test.dauerMs   = dauer;
+  v6Test.beiMillis = millis();
+
+  Serial.printf("  IPv6 raus: %s ([%s]:%u, %lu ms)\n",
+                ok ? "erreichbar, Standardroute wird genutzt" : "kein Durchkommen",
+                IPV6_TESTZIEL, IPV6_TESTPORT, (unsigned long)dauer);
+}
+
 void handleSeite() {
   server.send_P(200, "text/html; charset=utf-8", SEITE);
 }
 
 void handleApi() {
-  char json[960];
+  char json[1120];
   char feuchte[16];
   if (messwerte.hatFeuchte) snprintf(feuchte, sizeof(feuchte), "%.1f", messwerte.feuchte);
   else                      snprintf(feuchte, sizeof(feuchte), "null");
@@ -609,6 +651,8 @@ void handleApi() {
     "\"feuchte\":%s,\"hat_feuchte\":%s,\"sensor\":\"%s\",\"adresse\":%u,"
     "\"i2c\":\"%s\",\"hoehe_m\":%.0f,\"laufzeit_s\":%lu,\"alter_s\":%lu,"
     "\"ssid\":\"%s\",\"rssi\":%d,\"ipv4\":\"%s\",\"ipv6\":\"%s\","
+    "\"ipv6_extern\":%s,\"ipv6_extern_ms\":%lu,\"ipv6_extern_alter_s\":%ld,"
+    "\"ipv6_testziel\":\"%s\","
     "\"zeit_text\":\"%s\",\"zeit_unix\":%lu,\"zeit_ok\":%s,"
     "\"ntp\":\"%s\",\"ntp_alter_s\":%ld}",
     messwerte.temperatur, messwerte.druckAbs, messwerte.qnh,
@@ -618,6 +662,10 @@ void handleApi() {
     (unsigned long)((millis() - letzteMessung) / 1000),
     WLAN_SSID, WiFi.RSSI(),
     WiFi.localIP().toString().c_str(), ipv6Text().c_str(),
+    v6Test.gelaufen ? (v6Test.ok ? "true" : "false") : "null",
+    (unsigned long)v6Test.dauerMs,
+    v6Test.gelaufen ? (long)((millis() - v6Test.beiMillis) / 1000) : -1L,
+    IPV6_TESTZIEL,
     zeitStr, (unsigned long)time(nullptr), zeitGueltig() ? "true" : "false",
     ntpStatus(), abgleichAlter);
 
@@ -764,6 +812,7 @@ void setup() {
 
   zeigeNetz();
   wlanVerbinden();
+  if (WiFi.status() == WL_CONNECTED) pruefeIpv6Route();
 
   server.on("/",        handleSeite);
   server.on("/api",     handleApi);

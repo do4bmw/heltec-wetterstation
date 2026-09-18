@@ -1,0 +1,11 @@
+// Vorlage fuer die Zugangsdaten.
+//
+// Diese Datei nach "geheim.h" kopieren und die eigenen Werte eintragen.
+// geheim.h steht in der .gitignore und landet damit nicht im Repository.
+#pragma once
+
+#define WLAN_SSID     "DEIN_WLAN"
+#define WLAN_PASSWORT "DEIN_PASSWORT"
+
+// Hostname im Netz: erreichbar als http://heltec-wetter.local/
+#define HOSTNAME      "heltec-wetter"

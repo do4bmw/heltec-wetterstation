@@ -1,0 +1,10 @@
+# WLAN-Zugangsdaten - niemals einchecken.
+# Vorlage: Wetter_Web/geheim.h.beispiel
+geheim.h
+
+# Build-Artefakte von arduino-cli
+build/
+*.bin
+*.elf
+*.hex
+*.map
